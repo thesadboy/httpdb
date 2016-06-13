@@ -4,9 +4,9 @@ Standalong version for http server using in next softcenter.
 
 # Feature
 
-1. json api for skipdbv2
+1. json api for [skipdbv2](https://github.com/koolshare/skipdbv2)
 2. static files support
-3. shell calling supoort
+3. shell calling support
 4. reverse proxy for existing httpd server
 5. auth with exists httpd server
 6. http/https support
