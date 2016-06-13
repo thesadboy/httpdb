@@ -6,6 +6,7 @@
 #include "mongoose.h"
 #include <sys/queue.h>
 #include "dbapi.h"
+#include "khash.h"
 
 #define MAX_IDLE_CONNS 5
 #define CONN_IDLE_TIMEOUT 30
@@ -64,6 +65,31 @@ struct conn_data {
   int https;
 };
 
+#define DEFAULT_RESP_LEN (127)
+struct json_req {
+    STAILQ_ENTRY(json_req) reqs;
+
+    int id;
+    char* p;
+    int len;
+    time_t deadline;
+    char buf[DEFAULT_RESP_LEN+1];
+};
+
+typedef struct json_req* pjson_req;
+STAILQ_HEAD(json_req_list_head, json_req);
+KHASH_MAP_INIT_INT(32, pjson_req);
+
+struct json_req_mgr {
+    time_t last_check;
+    struct json_req_list_head req_list;
+    khash_t(32) req_map;
+    int total;
+};
+
+static struct json_req_mgr sreq_mgr = {0};
+
+/* json list context */
 struct dblist_ctx {
     struct mg_connection *nc;
     int index;
@@ -83,6 +109,97 @@ static struct mg_serve_http_opts s_http_server_opts = {0};
 #ifdef MG_ENABLE_SSL
 const char *s_ssl_cert = NULL;
 #endif
+
+static void init_req_mgr(struct json_req_mgr* mgr) {
+    mgr->req_map = kh_init(32);
+    STAILQ_INIT(&mgr->req_list);
+    mgr->total = 0;
+    mgr->last_check = 0;
+}
+
+static void check_timeout(struct json_req_mgr* mgr, time_t now) {
+    khiter_t k;
+    struct json_req* req;
+
+    if((now - mgr->last_check) < 3) {
+        return;
+    }
+    mgr->last_check = now;
+    printf("check total=%d\n", mgr->total);
+
+    while (!STAILQ_EMPTY(&mgr->req_list)) {
+        req = STAILQ_FIRST(&mgr->req_list);
+        if (now > req->deadline) {
+            //timeout
+            STAILQ_REMOVE_HEAD(&mgr->req_list, reqs);
+
+            k = kh_get(32, mgr->req_map, req->id);
+            if(k != kh_end(mgr->req_map)) {
+                //exists then delete it
+                kh_del(32, mgr->req_map, k);
+            }
+
+            //free it
+            if(req->p != NULL && req->p != req->buf) {
+                free(req->p);
+                req->p = NULL;
+            }
+            free(req);
+
+            mgr->total--;
+        } else {
+            break;
+        }
+    }
+
+}
+
+static int setJsonResponse(struct json_req_mgr* mgr, int id, char* buf, int buf_len) {
+    khiter_t k;
+    pjson_req req;
+
+    k = kh_get(32, mgr->req_map, req->id);
+    if(k == kh_end(mgr->req_map)) {
+        return -1;
+    }
+    req = kh_value(mgr->req_map, k);
+    if(req->p != NULL) {
+        return -2;
+    }
+
+    if(buf_len > DEFAULT_RESP_LEN) {
+        req->p = malloc(buf_len+1);
+    } else {
+        req->p = req->buf;
+    }
+
+    req->len = buf_len;
+    memcpy(req->p, buf, buf_len);
+    req->p[buf_len] = '\0';
+
+    return 0;
+}
+
+static void newJsonRequest(struct json_req_mgr* mgr, int id, time_t now) {
+    khiter_t k;
+    int ret;
+    pjson_req req = (pjson_req)malloc(sizeof(struct json_req));
+
+    if(NULL == req) {
+        return;
+    }
+
+    req->id = id;
+    req->p = NULL;
+    req->len = 0;
+    req->deadline = now + 60;
+
+    k = kh_put(32, mgr->req_map, id, &ret);
+    kh_value(mgr->req_map, k) = req;
+
+    STAILQ_INSERT_TAIL(&mgr->req_list, req, reqs);
+    mgr->total++;
+}
 
 static void ev_handler_http(struct mg_connection *nc, int ev, void *ev_data);
 static void ev_handler_https(struct mg_connection *nc, int ev, void *ev_data);
@@ -484,8 +601,8 @@ static int dblist_prefix(struct mg_connection *nc, dbclient* client, char* prefi
 }
 
 static int process_json(struct mg_connection *nc, struct http_message *hm) {
-#define DST_LEN 510
-    int i, n, dst_len = DST_LEN;
+#define DST_LEN (510)
+    int i, n, dst_len = DST_LEN-9;
     struct json_token tokens[200] = {{0}};
     char *buf, dst[DST_LEN+2];
     struct json_token *method, *params, *fields;
@@ -520,10 +637,20 @@ static int process_json(struct mg_connection *nc, struct http_message *hm) {
             dbclient_end(&client);
         }
 
+        fields = find_json_token(tokens, "id");
         method = find_json_token(tokens, "method");
-        if(method != NULL && JSON_TYPE_STRING == method[0].type && dst_len > method[0].len) {
+        if(method != NULL && JSON_TYPE_STRING == method[0].type && dst_len > method[0].len 
+                && fields != NULL && JSON_TYPE_NUMBER == fields[0].type && fields[0].len < 9) {
             n = method[0].len;
             memcpy(buf, method[0].ptr, n);
+            buf[n] = ' ';
+            buf[n+1] = '\0';
+            buf += n+1;
+            dst_len -= n+1;
+
+            //for id
+            n = fields[0].len;
+            memcpy(buf, fields[0].ptr, n);
             buf[n] = ' ';
             buf[n+1] = '\0';
             buf += n+1;
@@ -549,7 +676,10 @@ static int process_json(struct mg_connection *nc, struct http_message *hm) {
 
         }
 
-        //printf("set dst=%s\n", dst);
+        n = strtol(fields[0].ptr, NULL, 10);
+        printf("set id=%d dst=%s\n", n, dst);
+
+        newJsonRequest(&sreq_mgr, id, time(NULL));
 
         mg_printf_http_chunk(nc, "{ \"result\": %d }", 0);
         mg_send_http_chunk(nc, "", 0);
@@ -626,6 +756,7 @@ static void ev_handler(struct mg_connection *nc, int ev, void *ev_data, int http
           //mg_printf(nc, "HTTP/1.0 200 OK\r\nContent-Length: 2\r\n"
           //          "Content-Type: application/json\r\n\r\n{}");
 
+          check_timeout(&sjson_req, time(NULL));
           printf("result=%d\n", process_json(nc, hm));
 
           nc->flags |= MG_F_SEND_AND_CLOSE;

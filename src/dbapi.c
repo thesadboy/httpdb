@@ -314,15 +314,3 @@ int dbclient_end(dbclient* client) {
     return 0;
 }
 
-static int print_json(dbclient* client, void* o, char* prefix, char* key, char* value) {
-    printf("o['%s']='%s';\n", key, value);
-    return 0;
-}
-
-int dbclient_json(dbclient* client, char* prefix) {
-    printf("var %s=(function() ({\nvar o={};\n", prefix);
-    dbclient_list(client, prefix, NULL, print_json);
-    printf("return o;\n})();\n");
-    return 0;
-}
-
