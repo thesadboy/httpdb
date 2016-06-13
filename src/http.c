@@ -10,9 +10,10 @@
 #define MAX_IDLE_CONNS 5
 #define CONN_IDLE_TIMEOUT 30
 
-#ifndef MIN
-#define MIN(X, Y) (((X) < (Y)) ? (X) : (Y))
-#endif
+#define PREFIX_API "/_api/"
+#define PREFIX_API_LEN (6)
+#define PREFIX_ROOT "/_root/"
+#define PREFIX_ROOT_LEN (7)
 
 // gcc -o http ../../mongoose.c  http.c
 // gcc -DMG_ENABLE_SSL -lssl  -o http ../../mongoose.c  http.c
@@ -61,6 +62,11 @@ struct conn_data {
   struct peer backend;     /* Backend peer */
   time_t last_activity;
   int https;
+};
+
+struct dblist_ctx {
+    struct mg_connection *nc;
+    int index;
 };
 
 static const char *s_error_500 = "HTTP/1.1 500 Failed\r\n";
@@ -437,13 +443,57 @@ static void ev_handler_https(struct mg_connection *nc, int ev, void *ev_data) {
     ev_handler(nc, ev, ev_data, 1);
 }
 
+static int print_json(dbclient* client, void* o, char* prefix, char* key, char* value) {
+    struct dblist_ctx* ctx = (struct dblist_ctx*)o;
+
+    if(ctx->index == 0) {
+        mg_printf_http_chunk(ctx->nc, "\"%s\":\"%s\"\n", key, value);
+    } else {
+        mg_printf_http_chunk(ctx->nc, ",\"%s\":\"%s\"\n", key, value);
+    }
+
+    ctx->index++;
+    return 0;
+}
+
+static int dblist_prefix(struct mg_connection *nc, dbclient* client, char* prefix) {
+    struct dblist_ctx db_ctx;
+    char *p = strtok(prefix, ",");
+    int i = 0;
+
+    db_ctx.nc = nc;
+
+    mg_printf_http_chunk(nc, "{\"result\":[");
+
+    while(p != NULL) {
+        db_ctx.index = 0;
+        if(i == 0) {
+            mg_printf_http_chunk(nc, "{");
+        } else {
+            mg_printf_http_chunk(nc, ",{");
+        }
+        dbclient_list(client, prefix, &db_ctx, print_json);
+        mg_printf_http_chunk(nc, "}\n");
+
+        p = strtok(NULL, ",");
+        i++;
+    }
+
+    mg_printf_http_chunk(nc, "]}");
+    return 0;
+}
+
 static int process_json(struct mg_connection *nc, struct http_message *hm) {
 #define DST_LEN 510
     int i, n, dst_len = DST_LEN;
-    struct json_token tokens[200] = {0};
+    struct json_token tokens[200] = {{0}};
     char *buf, dst[DST_LEN+2];
     struct json_token *method, *params, *fields;
     dbclient client;
+
+      /* Send headers */
+      mg_printf(nc, "%s", "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n"
+              "Content-Type: application/json\r\n\r\n");
 
     if(0 == mg_vcasecmp(&hm->method, "POST")) {
         dst[0] = '\0';
@@ -499,8 +549,29 @@ static int process_json(struct mg_connection *nc, struct http_message *hm) {
 
         }
 
-        printf("dst=%s\n", dst);
+        //printf("set dst=%s\n", dst);
 
+        mg_printf_http_chunk(nc, "{ \"result\": %d }", 0);
+        mg_send_http_chunk(nc, "", 0);
+
+        return 0;
+    } else if(0 == mg_vcasecmp(&hm->method, "GET")) {
+        dst[0] = '\0';
+        if(dst_len < hm->uri.len || hm->uri.len <= PREFIX_API_LEN) {
+            mg_printf_http_chunk(nc, "{ \"result\": %d }", -3);
+            mg_send_http_chunk(nc, "", 0);
+            return -3;
+        }
+        n = hm->uri.len - PREFIX_API_LEN;
+        memcpy(dst, hm->uri.p + PREFIX_API_LEN, n);
+        dst[n] = '\0';
+        //printf("get dst=%s\n", dst);
+
+        dbclient_start(&client);
+        dblist_prefix(nc, &client, dst);
+        dbclient_end(&client);
+
+        mg_send_http_chunk(nc, "", 0); /* Send empty chunk, the end of response */
         return 0;
     }
 
@@ -550,29 +621,21 @@ static void ev_handler(struct mg_connection *nc, int ev, void *ev_data, int http
       assert(conn->be_conn == NULL);
       struct http_message *hm = (struct http_message *) ev_data;
 
-      if(hm != NULL && has_prefix(&hm->uri, "/_api/")) {
+      if(hm != NULL && has_prefix(&hm->uri, PREFIX_API)) {
           //printf("json connected\n");
           //mg_printf(nc, "HTTP/1.0 200 OK\r\nContent-Length: 2\r\n"
           //          "Content-Type: application/json\r\n\r\n{}");
 
           printf("result=%d\n", process_json(nc, hm));
 
-          /* Send headers */
-          mg_printf(nc, "%s", "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n"
-                  "Content-Type: application/json\r\n\r\n");
-
-          /* Compute the result and send it back as a JSON object */
-          mg_printf_http_chunk(nc, "{ \"result\": %lf }", 100.0);
-          mg_send_http_chunk(nc, "", 0); /* Send empty chunk, the end of response */
-
           nc->flags |= MG_F_SEND_AND_CLOSE;
           //Set Client.nc to NULL
           conn->client.nc = NULL;
           break;
-      } else if(hm != NULL && has_prefix(&hm->uri, "/_root/")) {
+      } else if(hm != NULL && has_prefix(&hm->uri, PREFIX_ROOT)) {
         //rewrite uri
-        hm->uri.p += 6;
-        hm->uri.len -= 6;
+        hm->uri.p += PREFIX_ROOT_LEN-1;
+        hm->uri.len -= PREFIX_ROOT_LEN-1;
         mg_serve_http(nc, hm, s_http_server_opts); /* Serve static content */
         break;
       } else {
@@ -696,8 +759,8 @@ int main(int argc, char *argv[]) {
   s_log_file = stdout;
   redirect = 0;
   vhost = NULL;
-  s_ssl_cert = "./ssl.pem";
-  s_http_server_opts.document_root = "web_root";
+  s_ssl_cert = "../tests/ssl.pem";
+  s_http_server_opts.document_root = "../tests/web_root";
   //s_http_server_opts.enable_directory_listing = "no";
   //s_http_server_opts.url_rewrites = "/_root=/web_root";
 

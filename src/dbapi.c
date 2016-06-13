@@ -19,7 +19,13 @@
 //"list "
 #define LIST_LEN 5
 
-typedef int (*fn_db_parse)(dbclient* client, void* o, char* prefix, char* key, char* value);
+typedef enum {
+    S2ISUCCESS = 0,
+    S2IOVERFLOW,
+    S2IUNDERFLOW,
+    S2IINCONVERTIBLE
+} STR2INT_ERROR;
+
 static int ignore_result(dbclient *client);
 
 static int write_util(dbclient* client, int len, unsigned int delay) {
@@ -96,6 +102,25 @@ static int setnonblock(int fd) {
     return fcntl(fd, F_SETFL, flags);
 }
 
+static STR2INT_ERROR str2int(int *i, char *s, int base) {
+  char *end;
+  long  l;
+  errno = 0;
+  l = strtol(s, &end, base);
+
+  if ((errno == ERANGE && l == LONG_MAX) || l > INT_MAX) {
+    return S2IOVERFLOW;
+  }
+  if ((errno == ERANGE && l == LONG_MIN) || l < INT_MIN) {
+    return S2IUNDERFLOW;
+  }
+  if (*s == '\0' || *end != '\0') {
+    return S2IINCONVERTIBLE;
+  }
+  *i = l;
+  return S2ISUCCESS;
+}
+
 int dbclient_start(dbclient* client) {
     char* socket_path = "/tmp/.skipd_server_sock";
 
@@ -116,7 +141,7 @@ int dbclient_start(dbclient* client) {
     return 0;
 }
 
-int dbclient_bulk(dbclient* client, char* command, char* key, int nk, char* value, int nv) {
+int dbclient_bulk(dbclient* client, const char* command, const char* key, int nk, const char* value, int nv) {
     int n1,n2,nc;
 
     nc = strlen(command);

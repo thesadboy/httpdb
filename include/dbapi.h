@@ -30,32 +30,6 @@
        __typeof__ (b) _b = (b); \
      _a > _b ? _a : _b; })
 
-typedef enum {
-    S2ISUCCESS = 0,
-    S2IOVERFLOW,
-    S2IUNDERFLOW,
-    S2IINCONVERTIBLE
-} STR2INT_ERROR;
-
-static STR2INT_ERROR str2int(int *i, char *s, int base) {
-  char *end;
-  long  l;
-  errno = 0;
-  l = strtol(s, &end, base);
-
-  if ((errno == ERANGE && l == LONG_MAX) || l > INT_MAX) {
-    return S2IOVERFLOW;
-  }
-  if ((errno == ERANGE && l == LONG_MIN) || l < INT_MIN) {
-    return S2IUNDERFLOW;
-  }
-  if (*s == '\0' || *end != '\0') {
-    return S2IINCONVERTIBLE;
-  }
-  *i = l;
-  return S2ISUCCESS;
-}
-
 typedef struct _dbclient {
     int remote_fd;
 
@@ -65,8 +39,11 @@ typedef struct _dbclient {
     int buf_pos;
 } dbclient;
 
+typedef int (*fn_db_parse)(dbclient* client, void* o, char* prefix, char* key, char* value);
+
 int dbclient_start(dbclient* client);
-int dbclient_bulk(dbclient* client, char* command, char* key, int nk, char* value, int nv);
+int dbclient_bulk(dbclient* client, const char* command, const char* key, int nk, const char* value, int nv);
 int dbclient_end(dbclient* client);
+int dbclient_list(dbclient* client, char* prefix, void* o, fn_db_parse fn);
 #endif
 

@@ -33,3 +33,5 @@
 *.su
 
 build
+cscope.*
+tags
