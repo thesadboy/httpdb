@@ -778,6 +778,42 @@ static int process_result(struct mg_connection *nc, struct http_message *hm) {
     return 0;
 }
 
+static int check_path_exists(const char *url, int len) {
+    int i;
+    char path[256];
+    static int root_len = 0;
+    struct stat st = {0};
+
+    if(0 == root_len) {
+        root_len = strlen(s_http_server_opts.document_root);
+        if('/' == s_http_server_opts.document_root[root_len]) {
+            root_len -= 1;
+        }
+    }
+
+    if((len + root_len) > 255 || len <= 0) {
+        return 0;
+    }
+
+    for(i = len-1; i >= 0; i--) {
+        if(url[i] == '.') {
+            break;
+        }
+    }
+    if (i < 0) {
+        return 0;
+    }
+
+    memcpy(path, s_http_server_opts.document_root, root_len);
+    memcpy(path+root_len, url, len);
+    path[root_len+len] = '\0';
+
+    if(0 == stat(path, &st) && S_ISREG(st.st_mode)) {
+        return 1;
+    }
+
+    return 0;
+}
 
 static void ev_handler(struct mg_connection *nc, int ev, void *ev_data, int https) {
     struct conn_data *conn = (struct conn_data *) nc->user_data;
@@ -862,19 +898,26 @@ static void ev_handler(struct mg_connection *nc, int ev, void *ev_data, int http
                                          conn->client.nc = NULL;
                                          break;
                                      } else {
-                                         conn->client.flags.keep_alive = is_keep_alive(hm);
-                                         if (!connect_backend(conn, hm)) {
-                                             respond_with_error(conn, s_error_500);
-                                             break;
-                                         }
+                                         if(check_path_exists(hm->uri.p, hm->uri.len)) {
+                                             mg_serve_http(nc, hm, s_http_server_opts);
 
-                                         if (conn->backend.nc == NULL) {
-                                             /* This is a redirect, we're done. */
-                                             conn->client.nc->flags |= MG_F_SEND_AND_CLOSE;
-                                             break;
-                                         }
+                                             nc->flags |= MG_F_SEND_AND_CLOSE;
+                                             conn->client.nc = NULL;
+                                         } else {
+                                             conn->client.flags.keep_alive = is_keep_alive(hm);
+                                             if (!connect_backend(conn, hm)) {
+                                                 respond_with_error(conn, s_error_500);
+                                                 break;
+                                             }
 
-                                         forward(conn, hm, &conn->client, &conn->backend);
+                                             if (conn->backend.nc == NULL) {
+                                                 /* This is a redirect, we're done. */
+                                                 conn->client.nc->flags |= MG_F_SEND_AND_CLOSE;
+                                                 break;
+                                             }
+
+                                             forward(conn, hm, &conn->client, &conn->backend);
+                                         }
                                          break;
                                      }
                                  }
@@ -1031,6 +1074,8 @@ int main(int argc, char *argv[]) {
         }
     }
 
+    s_http_server_opts.document_root = www;
+
     be =
         vhost != NULL ? &s_vhost_backends[s_num_vhost_backends++]
         : &s_default_backends[s_num_default_backends++];
@@ -1038,7 +1083,7 @@ int main(int argc, char *argv[]) {
 
     be->vhost = vhost;
     be->uri_prefix = "/";
-    be->host_port = "10.1.1.1:80";
+    be->host_port = reverse;
     be->redirect = 0;
     be->uri_prefix_replacement = be->uri_prefix;
 
