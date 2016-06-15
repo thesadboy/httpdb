@@ -5,6 +5,7 @@
 
 #include "mongoose.h"
 #include <sys/queue.h>
+#include <getopt.h>
 #include "dbapi.h"
 #include "khash.h"
 
@@ -106,17 +107,12 @@ struct dblist_ctx {
 static const char *s_error_500 = "HTTP/1.1 500 Failed\r\n";
 static const char *s_content_len_0 = "Content-Length: 0\r\n";
 static const char *s_connection_close = "Connection: close\r\n";
-static const char *s_http_port = "8000";
-static const char *s_https_port = "8443";
 static struct http_backend s_vhost_backends[100], s_default_backends[100];
 static int s_num_vhost_backends = 0, s_num_default_backends = 0;
 static int s_sig_num = 0;
 static int s_backend_keepalive = 0;
 static FILE *s_log_file = NULL;
 static struct mg_serve_http_opts s_http_server_opts = {0};
-#ifdef MG_ENABLE_SSL
-const char *s_ssl_cert = NULL;
-#endif
 
 static void init_req_mgr(struct json_req_mgr* mgr) {
     mgr->req_map = kh_init(32);
@@ -133,7 +129,7 @@ static void check_timeout(struct json_req_mgr* mgr, time_t now) {
         return;
     }
     mgr->last_check = now;
-    printf("check total=%d\n", mgr->total);
+    //printf("check total=%d\n", mgr->total);
 
     while (!STAILQ_EMPTY(&mgr->req_list)) {
         req = STAILQ_FIRST(&mgr->req_list);
@@ -366,7 +362,7 @@ static void forward(struct conn_data *conn, struct http_message *hm,
     src_peer->body_len = hm->body.len;
     struct http_backend *be = conn->be_conn->be;
 
-    printf("https=%d\n", conn->https);
+    //printf("https=%d\n", conn->https);
 
     if (is_request) {
         /* Write rewritten request line. */
@@ -395,7 +391,7 @@ static void forward(struct conn_data *conn, struct http_message *hm,
              * TODO(lsm): web page content may also contain local HTTP references,
              * they need to be rewritten too.
              */
-            if (mg_vcasecmp(&hn, "Location") == 0 && s_ssl_cert != NULL) {
+            if (mg_vcasecmp(&hn, "Location") == 0) {
                 size_t hlen = strlen(be->host_port);
                 const char *hp = be->host_port, *p = memchr(hp, ':', hlen);
 
@@ -966,46 +962,91 @@ static void ev_handler(struct mg_connection *nc, int ev, void *ev_data, int http
 
 static void print_usage_and_exit(const char *prog_name) {
     fprintf(stderr,
-            "Usage: %s [-D debug_dump_file] [-p http_port] [-l log] [-k]"
+            "Usage: %s [-p http_port] [-s https_port] [-l log] [-r reverse_host]"
 #if MG_ENABLE_SSL
-            "[-s ssl_cert] "
+            "[-c cert] "
 #endif
-            "<[-r] [-v vhost] -b uri_prefix[=replacement] host_port> ... \n",
+            "[-w www_root]\n example: ./bin/httpdb -p 8000 -s 8443 -r 10.1.1.1:80 -c ../tests/ssl.pem -w ../tests/web_root\n",
             prog_name);
     exit(EXIT_FAILURE);
 }
 
+const struct option long_options[] = {
+      {"http_port", required_argument, 0, 'p'},
+      {"https_port", required_argument, 0, 's'},
+      {"cert", required_argument, 0, 'c'},
+      {"reverse", required_argument, 0, 'r'},
+      {"www", required_argument, 0, 'w'},
+      {"log", required_argument, 0, 'l'},
+      {0, 0, 0, 0}
+};
+
 int main(int argc, char *argv[]) {
     struct mg_mgr mgr;
     struct mg_connection *nc_http, *nc_https;
-    int redirect = 0;
-    const char *vhost = NULL;
+    struct http_backend *be;
+    char http_port[64], https_port[64], www[128], reverse[128];
+    char c = 0, *vhost = NULL, *cert = NULL, *log = NULL;
 
     mg_mgr_init(&mgr, NULL);
+
     s_backend_keepalive = 1;
     s_log_file = stdout;
-    redirect = 0;
     vhost = NULL;
-    s_ssl_cert = "../tests/ssl.pem";
-    s_http_server_opts.document_root = "../tests/web_root";
+    //cert = "../tests/ssl.pem";
+    //s_http_server_opts.document_root = "../tests/web_root";
     //s_http_server_opts.enable_directory_listing = "no";
     //s_http_server_opts.url_rewrites = "/_root=/web_root";
 
-    struct http_backend *be =
+    http_port[0] = '\0';
+    https_port[0] = '\0';
+    www[0] = '\0';
+    reverse[0] = '\0';
+
+    while (c >= 0) {
+        c = getopt_long(argc, argv, "p:s:c:r:w:l:h", long_options, NULL);
+        if (c < 0) {
+            continue;
+        }
+        switch(c) {
+            case 'p':
+                strncpy(http_port, optarg, 63);
+                break;
+            case 's':
+                strncpy(https_port, optarg, 63);
+                break;
+            case 'c':
+                cert = optarg;
+                break;
+            case 'r':
+                strncpy(reverse, optarg, 127);
+            case 'w':
+                strncpy(www, optarg, 127);
+                break;
+            case 'l':
+                log = optarg;
+                break;
+            case 'h':
+                print_usage_and_exit(argv[0]);
+        }
+    }
+
+    be =
         vhost != NULL ? &s_vhost_backends[s_num_vhost_backends++]
         : &s_default_backends[s_num_default_backends++];
     STAILQ_INIT(&be->conns);
 
-    char *r = NULL;
     be->vhost = vhost;
     be->uri_prefix = "/";
     be->host_port = "10.1.1.1:80";
-    be->redirect = redirect;
+    be->redirect = 0;
     be->uri_prefix_replacement = be->uri_prefix;
-    if ((r = strchr(be->uri_prefix, '=')) != NULL) {
+
+    /* if ((r = strchr(be->uri_prefix, '=')) != NULL) {
         *r = '\0';
         be->uri_prefix_replacement = r + 1;
-    }
+    } */
+
     printf(
             "Adding backend for %s%s : %s "
             "[redirect=%d,prefix_replacement=%s]\n",
@@ -1015,19 +1056,19 @@ int main(int argc, char *argv[]) {
     init_req_mgr(&sreq_mgr);
 
     /* Open listening socket */
-    if ((nc_http = mg_bind(&mgr, s_http_port, ev_handler_http)) == NULL) {
-        fprintf(stderr, "mg_bind(%s) failed\n", s_http_port);
+    if ((nc_http = mg_bind(&mgr, http_port, ev_handler_http)) == NULL) {
+        fprintf(stderr, "mg_bind(%s) failed\n", http_port);
         exit(EXIT_FAILURE);
     }
 
-    if ((nc_https = mg_bind(&mgr, s_https_port, ev_handler_https)) == NULL) {
-        fprintf(stderr, "mg_bind(%s) failed\n", s_http_port);
+    if ((nc_https = mg_bind(&mgr, https_port, ev_handler_https)) == NULL) {
+        fprintf(stderr, "mg_bind(%s) failed\n", https_port);
         exit(EXIT_FAILURE);
     }
 
 #if MG_ENABLE_SSL
-    if (s_ssl_cert != NULL) {
-        const char *err_str = mg_set_ssl(nc_https, s_ssl_cert, NULL);
+    if (cert != NULL) {
+        const char *err_str = mg_set_ssl(nc_https, cert, NULL);
         if (err_str != NULL) {
             fprintf(stderr, "Error loading SSL cert: %s\n", err_str);
             exit(1);
@@ -1047,7 +1088,7 @@ int main(int argc, char *argv[]) {
     signal(SIGTERM, signal_handler);
 
     /* Run event loop until signal is received */
-    printf("Starting http on port %s\nhttps on port %s\n", s_http_port, s_https_port);
+    printf("Starting http on port %s\nhttps on port %s\n", http_port, https_port);
     while (s_sig_num == 0) {
         mg_mgr_poll(&mgr, 1000);
     }
