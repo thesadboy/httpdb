@@ -7,5 +7,5 @@ curl -X GET http://$IP/_result/3434343
 curl -X GET http://$IP/_api/ss_
 curl http://$IP/_root/a.txt
 curl http://$IP/a.txt
-curl --insecure  https://$IPS:8443/a.txt
+curl --insecure  https://$IPS/a.txt
 
