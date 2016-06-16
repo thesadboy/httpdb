@@ -1,6 +1,6 @@
 # Httpdb
 
-Standalong version for http server using in next softcenter.
+Standalong version for http server using in next softcenter.  外挂型软件中心，完全不改原有固件的任何代码。 通过反向代理把原先的 http server 替换。
 
 # Feature
 
