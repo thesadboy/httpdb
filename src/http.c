@@ -1009,7 +1009,7 @@ static void print_usage_and_exit(const char *prog_name) {
 #if MG_ENABLE_SSL
             "[-c cert] "
 #endif
-            "[-w www_root]\n example: ./bin/httpdb -p 8000 -s 8443 -r 10.1.1.1:80 -c ../tests/ssl.pem -w ../tests/web_root\n",
+            "[-w www_root]\nExample: ./bin/httpdb -p 8000 -s 8443 -r 10.1.1.1:80 -c ../tests/ssl.pem -w ../tests/web_root\n",
             prog_name);
     exit(EXIT_FAILURE);
 }
