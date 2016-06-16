@@ -40,6 +40,9 @@ make
   * 脚本参数为 33,44 智能为数字，实际脚本运行参数为：config.sh 3434343 33 44
   * 向 dbus 存储的对象是 "hello":"cc","hd":"oooo","hf":"nnn"，路由器通过命令 dbus list h，会把参数拿到
 
+* curl -X GET http://127.0.0.1/_api/he,hd
+  * 拿到 dbus 中前缀为 he 或 为 hd 的所有参数
+
 * curl -X POST -d 'test' http://127.0.0.1:8000/_resp/3434343
   * 设置返回值。当脚本运行结束之后，运行此参数，可以临时设置脚本的返回值为 test。保存 1 分钟超时
 
