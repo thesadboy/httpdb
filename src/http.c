@@ -21,6 +21,7 @@
 #define PREFIX_RESULT "/_result/"
 #define PREFIX_RESULT_LEN (9)
 
+// 106.186.20.48
 // gcc -o http ../../mongoose.c  http.c
 // curl -X POST -d '{"id":3434343, "method":"echo", "params":[33,44],"fields":{"hello":"cc","hd":"oooo","hf":"nnn"}}' http://127.0.0.1:8000/_api/
 // curl -X POST -d 'test' http://127.0.0.1:8000/_resp/3434343
@@ -71,12 +72,14 @@ struct conn_data {
     struct peer backend;     /* Backend peer */
     time_t last_activity;
     int https;
+    int id;
 };
 
 #define DEFAULT_RESP_LEN (127)
 struct json_req {
     STAILQ_ENTRY(json_req) reqs;
 
+    struct mg_connection* nc;
     int id;
     char* p;
     int len;
@@ -148,6 +151,14 @@ static void check_timeout(struct json_req_mgr* mgr, time_t now) {
                 free(req->p);
                 req->p = NULL;
             }
+
+            if(NULL != req->nc) {
+                mg_printf_http_chunk(req->nc, "{ \"result\": %d }", -6);
+                mg_send_http_chunk(req->nc, "", 0);
+                req->nc->flags |= MG_F_SEND_AND_CLOSE;
+                req->nc = NULL;
+            }
+
             free(req);
 
             mgr->total--;
@@ -158,7 +169,18 @@ static void check_timeout(struct json_req_mgr* mgr, time_t now) {
 
 }
 
-static int setJsonResponse(struct json_req_mgr* mgr, int id, const char* buf, int buf_len) {
+static void delete_nc_by_id(struct json_req_mgr* mgr, int id) {
+    khiter_t k;
+    struct json_req* req;
+
+    k = kh_get(32, mgr->req_map, id);
+    if(k != kh_end(mgr->req_map)) {
+        req = kh_value(mgr->req_map, k);
+        req->nc = NULL;
+    }
+}
+
+static int set_json_response(struct json_req_mgr* mgr, int id, const char* buf, int buf_len) {
     khiter_t k;
     pjson_req req;
 
@@ -194,29 +216,32 @@ static int setJsonResponse(struct json_req_mgr* mgr, int id, const char* buf, in
     return 0;
 }
 
-static void newJsonRequest(struct json_req_mgr* mgr, int id, time_t now) {
+static int new_json_request(struct json_req_mgr* mgr, struct mg_connection *nc, int id, time_t now) {
     khiter_t k;
     int ret;
     pjson_req req = (pjson_req)malloc(sizeof(struct json_req));
 
     if(NULL == req) {
-        return;
+        return -2;
     }
 
     req->id = id;
     req->p = NULL;
     req->len = 0;
     req->cap = 0;
-    req->deadline = now + 60;
+    req->deadline = now + CONN_IDLE_TIMEOUT - 5;
+    req->nc = nc;
 
     k = kh_put(32, mgr->req_map, id, &ret);
     kh_value(mgr->req_map, k) = req;
 
     STAILQ_INSERT_TAIL(&mgr->req_list, req, reqs);
     mgr->total++;
+
+    return 0;
 }
 
-static int showShellResp(struct json_req_mgr* mgr, int id, struct mg_connection *nc) {
+static int show_shell_resp(struct json_req_mgr* mgr, int id, struct mg_connection *nc) {
     khiter_t k;
     pjson_req req;
 
@@ -226,7 +251,14 @@ static int showShellResp(struct json_req_mgr* mgr, int id, struct mg_connection 
     }
     req = kh_value(mgr->req_map, k);
     if(NULL != req->p) {
-        mg_printf_http_chunk(nc, "%s", req->p);
+        if(nc != NULL) {
+            mg_printf_http_chunk(nc, "{\"result\": \"%s\"}", req->p);
+        } else if(req->nc != NULL) {
+            mg_printf_http_chunk(req->nc, "{\"result\": \"%s\"}", req->p);
+            mg_send_http_chunk(req->nc, "", 0);
+            req->nc->flags |= MG_F_SEND_AND_CLOSE;
+            req->nc = NULL;
+        }
         return 0;
     }
 
@@ -632,16 +664,17 @@ static int dblist_prefix(struct mg_connection *nc, dbclient* client, char* prefi
     return 0;
 }
 
-static int process_json(struct mg_connection *nc, struct http_message *hm) {
+static int process_json(struct conn_data* conn, struct http_message *hm) {
 #define DST_LEN (510)
     int i, n, dst_len = DST_LEN-9;
     struct json_token tokens[200] = {{0}};
     char *buf, dst[DST_LEN+50];
     struct json_token *method, *params, *fields;
+    struct mg_connection *nc = conn->client.nc;
     dbclient client;
 
-    /* Send headers */
-    mg_printf(nc, "%s", "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n"
+    /* Send headers keep-alive */
+    mg_printf(nc, "%s", "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nConnection: keep-alive\r\n"
             "Content-Type: application/json\r\n\r\n");
 
     if(0 == mg_vcasecmp(&hm->method, "POST")) {
@@ -713,11 +746,12 @@ static int process_json(struct mg_connection *nc, struct http_message *hm) {
             printf("set id=%d flen=%d dst=%s\n", n, fields[0].len, dst);
             system(dst);
 
-            newJsonRequest(&sreq_mgr, n, time(NULL));
+            new_json_request(&sreq_mgr, nc, n, time(NULL));
+            conn->id = n;
+        } else {
+            mg_printf_http_chunk(nc, "{ \"result\": %d }", 0);
+            mg_send_http_chunk(nc, "", 0);
         }
-
-        mg_printf_http_chunk(nc, "{ \"result\": %d }", 0);
-        mg_send_http_chunk(nc, "", 0);
 
         return 0;
     } else if(0 == mg_vcasecmp(&hm->method, "GET")) {
@@ -736,14 +770,18 @@ static int process_json(struct mg_connection *nc, struct http_message *hm) {
         dblist_prefix(nc, &client, dst);
         dbclient_end(&client);
 
-        mg_send_http_chunk(nc, "", 0); /* Send empty chunk, the end of response */
+        mg_send_http_chunk(nc, "", 0);
+
+        nc->flags |= MG_F_SEND_AND_CLOSE;
+        conn->client.nc = NULL;
+
         return 0;
     }
 
     return -2;
 }
 
-static int process_resp(struct mg_connection *nc, struct http_message *hm) {
+static int process_resp(struct mg_connection *nc, struct http_message *hm, int* id) {
     char dst[64];
     int n;
 
@@ -756,7 +794,9 @@ static int process_resp(struct mg_connection *nc, struct http_message *hm) {
     dst[n] = 0;
 
     n = strtol(dst, NULL, 10);
-    return setJsonResponse(&sreq_mgr, n, hm->body.p, hm->body.len);
+
+    *id = n;
+    return set_json_response(&sreq_mgr, n, hm->body.p, hm->body.len);
 }
 
 static int process_result(struct mg_connection *nc, struct http_message *hm) {
@@ -773,8 +813,8 @@ static int process_result(struct mg_connection *nc, struct http_message *hm) {
 
     n = strtol(dst, NULL, 10);
 
-    mg_printf_http_chunk(nc, "%s", "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nContent-Type: text/plain\r\n\r\n");
-    if(0 != showShellResp(&sreq_mgr, n, nc)) {
+    mg_printf_http_chunk(nc, "%s", "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\nContent-Type: application/json\r\n\r\n");
+    if(0 != show_shell_resp(&sreq_mgr, n, nc)) {
         mg_printf_http_chunk(nc, "%d", -1);
     }
     mg_send_http_chunk(nc, "", 0);
@@ -822,7 +862,7 @@ static int check_path_exists(const char *url, int len) {
 static void ev_handler(struct mg_connection *nc, int ev, void *ev_data, int https) {
     struct conn_data *conn = (struct conn_data *) nc->user_data;
     const time_t now = time(NULL);
-    int result;
+    int result, id;
 
 #ifdef DEBUG
     write_log("%d conn=%p nc=%p ev=%d ev_data=%p bec=%p bec_nc=%p\n", now, conn,
@@ -843,6 +883,7 @@ static void ev_handler(struct mg_connection *nc, int ev, void *ev_data, int http
                 conn->backend.body_len = -1;
                 conn->last_activity = now;
                 conn->https = https;
+                conn->id = 0;
             }
             return;
         } else {
@@ -858,152 +899,169 @@ static void ev_handler(struct mg_connection *nc, int ev, void *ev_data, int http
     if (ev != MG_EV_POLL) conn->last_activity = now;
 
     switch (ev) {
-        case MG_EV_HTTP_REQUEST: { /* From client */
-                                     assert(conn != NULL);
-                                     assert(conn->be_conn == NULL);
-                                     struct http_message *hm = (struct http_message *) ev_data;
+        case MG_EV_HTTP_REQUEST:
+            { /* From client */
+                assert(conn != NULL);
+                assert(conn->be_conn == NULL);
+                struct http_message *hm = (struct http_message *) ev_data;
 
-                                    check_timeout(&sreq_mgr, time(NULL));
+                check_timeout(&sreq_mgr, time(NULL));
 
-                                     if(hm != NULL && has_prefix(&hm->uri, PREFIX_API)) {
-                                         //printf("json connected\n");
-                                         //mg_printf(nc, "HTTP/1.0 200 OK\r\nContent-Length: 2\r\n"
-                                         //          "Content-Type: application/json\r\n\r\n{}");
+                if(hm != NULL && has_prefix(&hm->uri, PREFIX_API)) {
+                    //printf("json connected\n");
+                    //mg_printf(nc, "HTTP/1.0 200 OK\r\nContent-Length: 2\r\n"
+                    //          "Content-Type: application/json\r\n\r\n{}");
 
-                                         result = process_json(nc, hm);
-                                         printf("result=%d\n", result);
+                    result = process_json(conn, hm);
+                    printf("result=%d\n", result);
+                    if(result != 0) {
+                        nc->flags |= MG_F_SEND_AND_CLOSE;
+                        conn->client.nc = NULL;
+                    }
 
-                                         nc->flags |= MG_F_SEND_AND_CLOSE;
-                                         conn->client.nc = NULL;
-                                         break;
-                                     } else if(hm != NULL && has_prefix(&hm->uri, PREFIX_ROOT)) {
-                                         //rewrite uri
-                                         hm->uri.p += PREFIX_ROOT_LEN-1;
-                                         hm->uri.len -= PREFIX_ROOT_LEN-1;
-                                         mg_serve_http(nc, hm, s_http_server_opts); /* Serve static content */
+                    break;
+                } else if(hm != NULL && has_prefix(&hm->uri, PREFIX_ROOT)) {
+                    //rewrite uri
+                    hm->uri.p += PREFIX_ROOT_LEN-1;
+                    hm->uri.len -= PREFIX_ROOT_LEN-1;
+                    mg_serve_http(nc, hm, s_http_server_opts); /* Serve static content */
 
-                                         nc->flags |= MG_F_SEND_AND_CLOSE;
-                                         conn->client.nc = NULL;
-                                         break;
-                                     } else if(hm != NULL && has_prefix(&hm->uri, PREFIX_RESP)) {
+                    nc->flags |= MG_F_SEND_AND_CLOSE;
+                    conn->client.nc = NULL;
+                    break;
+                } else if(hm != NULL && has_prefix(&hm->uri, PREFIX_RESP)) {
 
-                                         result = process_resp(nc, hm);
-                                         mg_printf_http_chunk(nc, "%s{\"result\":%d}\n", "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n"
-                                                "Content-Type: application/json\r\n\r\n", result);
-                                         mg_send_http_chunk(nc, "", 0); /* Send empty chunk, the end of response */
-                                         nc->flags |= MG_F_SEND_AND_CLOSE;
-                                         conn->client.nc = NULL;
-                                         break;
-                                     } else if(hm != NULL && has_prefix(&hm->uri, PREFIX_RESULT)) {
+                    id = 0;
+                    result = process_resp(nc, hm, &id);
+                    mg_printf_http_chunk(nc, "%s{\"result\":%d}\n", "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n"
+                            "Content-Type: application/json\r\n\r\n", result);
+                    mg_send_http_chunk(nc, "", 0); /* Send empty chunk, the end of response */
+                    nc->flags |= MG_F_SEND_AND_CLOSE;
+                    conn->client.nc = NULL;
 
-                                         process_result(nc, hm);
+                    if(id != 0) {
+                        show_shell_resp(&sreq_mgr, id, NULL);
+                    }
 
-                                         nc->flags |= MG_F_SEND_AND_CLOSE;
-                                         conn->client.nc = NULL;
-                                         break;
-                                     } else {
-                                         if(check_path_exists(hm->uri.p, hm->uri.len)) {
-                                             mg_serve_http(nc, hm, s_http_server_opts);
+                    break;
+                } else if(hm != NULL && has_prefix(&hm->uri, PREFIX_RESULT)) {
 
-                                             nc->flags |= MG_F_SEND_AND_CLOSE;
-                                             conn->client.nc = NULL;
-                                         } else {
-                                             conn->client.flags.keep_alive = is_keep_alive(hm);
-                                             if (!connect_backend(conn, hm)) {
-                                                 respond_with_error(conn, s_error_500);
-                                                 break;
-                                             }
+                    process_result(nc, hm);
 
-                                             if (conn->backend.nc == NULL) {
-                                                 /* This is a redirect, we're done. */
-                                                 conn->client.nc->flags |= MG_F_SEND_AND_CLOSE;
-                                                 break;
-                                             }
+                    nc->flags |= MG_F_SEND_AND_CLOSE;
+                    conn->client.nc = NULL;
+                    break;
+                } else {
+                    if(check_path_exists(hm->uri.p, hm->uri.len)) {
+                        mg_serve_http(nc, hm, s_http_server_opts);
 
-                                             forward(conn, hm, &conn->client, &conn->backend);
-                                         }
-                                         break;
-                                     }
-                                 }
+                        nc->flags |= MG_F_SEND_AND_CLOSE;
+                        conn->client.nc = NULL;
+                    } else {
+                        conn->client.flags.keep_alive = is_keep_alive(hm);
+                        if (!connect_backend(conn, hm)) {
+                            respond_with_error(conn, s_error_500);
+                            break;
+                        }
 
-        case MG_EV_CONNECT: { /* To backend */
-                                assert(conn != NULL);
-                                assert(conn->be_conn != NULL);
-                                int status = *(int *) ev_data;
-                                if (status != 0) {
-                                    write_log("Error connecting to %s: %d (%s)\n",
-                                            conn->be_conn->be->host_port, status, strerror(status));
-                                    /* TODO(lsm): mark backend as defunct, try it later on */
-                                    respond_with_error(conn, s_error_500);
-                                    conn->be_conn->nc = NULL;
-                                    release_backend(conn);
-                                    break;
-                                }
-                                break;
-                            }
+                        if (conn->backend.nc == NULL) {
+                            /* This is a redirect, we're done. */
+                            conn->client.nc->flags |= MG_F_SEND_AND_CLOSE;
+                            break;
+                        }
 
-        case MG_EV_HTTP_REPLY: { /* From backend */
-                                   assert(conn != NULL);
-                                   struct http_message *hm = (struct http_message *) ev_data;
-                                   conn->backend.flags.keep_alive = s_backend_keepalive && is_keep_alive(hm);
-                                   forward(conn, hm, &conn->backend, &conn->client);
-                                   release_backend(conn);
-                                   if (!conn->client.flags.keep_alive) {
-                                       conn->client.nc->flags |= MG_F_SEND_AND_CLOSE;
-                                   } else {
+                        forward(conn, hm, &conn->client, &conn->backend);
+                    }
+                    break;
+                }
+            }
+
+        case MG_EV_CONNECT:
+            { /* To backend */
+                assert(conn != NULL);
+                assert(conn->be_conn != NULL);
+                int status = *(int *) ev_data;
+                if (status != 0) {
+                    write_log("Error connecting to %s: %d (%s)\n",
+                            conn->be_conn->be->host_port, status, strerror(status));
+                    /* TODO(lsm): mark backend as defunct, try it later on */
+                    respond_with_error(conn, s_error_500);
+                    conn->be_conn->nc = NULL;
+                    release_backend(conn);
+                    break;
+                }
+                break;
+            }
+
+        case MG_EV_HTTP_REPLY:
+            { /* From backend */
+                assert(conn != NULL);
+                struct http_message *hm = (struct http_message *) ev_data;
+                conn->backend.flags.keep_alive = s_backend_keepalive && is_keep_alive(hm);
+                forward(conn, hm, &conn->backend, &conn->client);
+                release_backend(conn);
+                if (!conn->client.flags.keep_alive) {
+                    conn->client.nc->flags |= MG_F_SEND_AND_CLOSE;
+                } else {
 #ifdef DEBUG
-                                       write_log("conn=%p remains open\n", conn);
+                    write_log("conn=%p remains open\n", conn);
 #endif
-                                   }
-                                   break;
-                               }
+                }
+                break;
+            }
 
-        case MG_EV_POLL: {
-                             assert(conn != NULL);
-                             if (now - conn->last_activity > CONN_IDLE_TIMEOUT &&
-                                     conn->backend.nc == NULL /* not waiting for backend */) {
+        case MG_EV_POLL:
+            {
+                assert(conn != NULL);
+                if (now - conn->last_activity > CONN_IDLE_TIMEOUT &&
+                        conn->backend.nc == NULL /* not waiting for backend */) {
 #ifdef DEBUG
-                                 write_log("conn=%p has been idle for too long\n", conn);
-                                 conn->client.nc->flags |= MG_F_SEND_AND_CLOSE;
+                    write_log("conn=%p has been idle for too long\n", conn);
+                    conn->client.nc->flags |= MG_F_SEND_AND_CLOSE;
 #endif
-                             }
-                             break;
-                         }
+                }
+                break;
+            }
 
-        case MG_EV_CLOSE: {
-                              assert(conn != NULL);
-                              if(conn->client.nc == NULL) {
-                                  //json closed
-                                  printf("json closed\n");
-                              } else if (nc == conn->client.nc) {
+        case MG_EV_CLOSE:
+            {
+                assert(conn != NULL);
+                if(conn->client.nc == NULL) {
+                    //json closed
+                    printf("json closed\n");
+                } else if (nc == conn->client.nc) {
 #ifdef DEBUG
-                                  write_log("conn=%p nc=%p client closed, body_sent=%d\n", conn, nc,
-                                          conn->backend.body_sent);
+                    write_log("conn=%p nc=%p client closed, body_sent=%d\n", conn, nc,
+                            conn->backend.body_sent);
 #endif
-                                  conn->client.nc = NULL;
-                                  if (conn->backend.nc != NULL) {
-                                      conn->backend.nc->flags |= MG_F_CLOSE_IMMEDIATELY;
-                                  }
-                              } else if (nc == conn->backend.nc) {
+                    conn->client.nc = NULL;
+                    if (conn->backend.nc != NULL) {
+                        conn->backend.nc->flags |= MG_F_CLOSE_IMMEDIATELY;
+                    }
+                } else if (nc == conn->backend.nc) {
 #ifdef DEBUG
-                                  write_log("conn=%p nc=%p backend closed\n", conn, nc);
+                    write_log("conn=%p nc=%p backend closed\n", conn, nc);
 #endif
-                                  conn->backend.nc = NULL;
-                                  if (conn->client.nc != NULL &&
-                                          (conn->backend.body_len < 0 ||
-                                           conn->backend.body_sent < conn->backend.body_len)) {
-                                      write_log("Backend %s disconnected.\n", conn->be_conn->be->host_port);
-                                      respond_with_error(conn, s_error_500);
-                                  }
-                              }
+                    conn->backend.nc = NULL;
+                    if (conn->client.nc != NULL &&
+                            (conn->backend.body_len < 0 ||
+                             conn->backend.body_sent < conn->backend.body_len)) {
+                        write_log("Backend %s disconnected.\n", conn->be_conn->be->host_port);
+                        respond_with_error(conn, s_error_500);
+                    }
+                }
 
-                              if (conn->client.nc == NULL && conn->backend.nc == NULL) {
-                                  //printf("free conn conn=0x%02x\n", conn);
-                                  free(conn);
-                              }
+                if(conn->id != 0) {
+                    delete_nc_by_id(&sreq_mgr, conn->id);
+                }
 
-                              break;
-                          }
+                if (conn->client.nc == NULL && conn->backend.nc == NULL) {
+                    //printf("free conn conn=0x%02x\n", conn);
+                    free(conn);
+                }
+
+                break;
+            }
     }
 }
 
@@ -1019,13 +1077,13 @@ static void print_usage_and_exit(const char *prog_name) {
 }
 
 const struct option long_options[] = {
-      {"http_port", required_argument, 0, 'p'},
-      {"https_port", required_argument, 0, 's'},
-      {"cert", required_argument, 0, 'c'},
-      {"reverse", required_argument, 0, 'r'},
-      {"www", required_argument, 0, 'w'},
-      {"log", required_argument, 0, 'l'},
-      {0, 0, 0, 0}
+    {"http_port", required_argument, 0, 'p'},
+    {"https_port", required_argument, 0, 's'},
+    {"cert", required_argument, 0, 'c'},
+    {"reverse", required_argument, 0, 'r'},
+    {"www", required_argument, 0, 'w'},
+    {"log", required_argument, 0, 'l'},
+    {0, 0, 0, 0}
 };
 
 int main(int argc, char *argv[]) {
@@ -1092,9 +1150,9 @@ int main(int argc, char *argv[]) {
     be->uri_prefix_replacement = be->uri_prefix;
 
     /* if ((r = strchr(be->uri_prefix, '=')) != NULL) {
-        *r = '\0';
-        be->uri_prefix_replacement = r + 1;
-    } */
+     *r = '\0';
+     be->uri_prefix_replacement = r + 1;
+     } */
 
     printf(
             "Adding backend for %s%s : %s "
