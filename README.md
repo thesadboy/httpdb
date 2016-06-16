@@ -39,6 +39,7 @@ make
   * 运行的脚本为 config.sh
   * 脚本参数为 33,44 智能为数字，实际脚本运行参数为：config.sh 3434343 33 44
   * 向 dbus 存储的对象是 "hello":"cc","hd":"oooo","hf":"nnn"，路由器通过命令 dbus list h，会把参数拿到
+  * 直接返回脚本执行的结果
 
 * curl -X GET http://127.0.0.1/_api/he,hd
   * 拿到 dbus 中前缀为 he 或 为 hd 的所有参数
