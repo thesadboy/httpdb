@@ -7,7 +7,7 @@
 #
 #cmake28 -DCMAKE_TOOLCHAIN_FILE=../cross-arm-linux-gnueabihf.cmake -DLIBEV_LIBRARIES=/projects/arm/lib/libev.a -DLIBEV_INCLUDE_DIRS=/projects/arm/include ..
 
-set(CROSS_PATH /projects/asuswrt-merlin2/release/src-rt-6.x.4708/toolchains/hndtools-arm-linux-2.6.36-uclibc-4.5.3)
+set(CROSS_PATH /opt/brcm-arm)
 
 # Target operating system name.
 set(CMAKE_SYSTEM_NAME Linux)
