@@ -1113,7 +1113,7 @@ int main(int argc, char *argv[]) {
         // Bug in netgear.
         //c = getopt_long(argc, argv, "p:s:c:r:w:l:h", long_options, NULL);
         c = getopt(argc, argv, "p:s:c:r:w:l:h");
-        if (c < 0) {
+        if (c <= 0) {
             break;
         }
         printf("%c", c);
