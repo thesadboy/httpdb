@@ -1091,7 +1091,8 @@ int main(int argc, char *argv[]) {
     struct mg_connection *nc_http = NULL, *nc_https = NULL;
     struct http_backend *be;
     char http_port[64], https_port[64], www[128], reverse[128];
-    char c = 0, *vhost = NULL, *cert = NULL, *log = NULL;
+    char *vhost = NULL, *cert = NULL, *log = NULL;
+    int c = 0;
 
     mg_mgr_init(&mgr, NULL);
 
