@@ -1110,13 +1110,8 @@ int main(int argc, char *argv[]) {
     fprintf(stderr, "%d\n", __LINE__);
 
     while (c >= 0) {
-        // Bug in netgear.
-        //c = getopt_long(argc, argv, "p:s:c:r:w:l:h", long_options, NULL);
-        c = getopt(argc, argv, "p:s:c:r:w:l:h");
-        if (c <= 0) {
-            break;
-        }
-        printf("%x ", c);
+        // Bug in netgear. c === 0xFF
+        c = getopt_long(argc, argv, "p:s:c:r:w:l:h", long_options, NULL);
         switch(c) {
             case 'p':
                 strncpy(http_port, optarg, 63);
@@ -1136,6 +1131,7 @@ int main(int argc, char *argv[]) {
                 log = optarg;
                 break;
             case 'h':
+            default:
                 print_usage_and_exit(argv[0]);
                 break;
         }
