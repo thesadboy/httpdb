@@ -1134,7 +1134,7 @@ int main(int argc, char *argv[]) {
                 break;
             default:
                 // Bug in netgear. c === 0xFF
-                printf("got c=%x", c);
+                printf("got c=%x\n", c);
                 c = -1;
                 break;
         }
