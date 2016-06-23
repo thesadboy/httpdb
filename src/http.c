@@ -1110,7 +1110,6 @@ int main(int argc, char *argv[]) {
     fprintf(stderr, "%d\n", __LINE__);
 
     while (c >= 0) {
-        // Bug in netgear. c === 0xFF
         c = getopt_long(argc, argv, "p:s:c:r:w:l:h", long_options, NULL);
         switch(c) {
             case 'p':
@@ -1134,6 +1133,7 @@ int main(int argc, char *argv[]) {
                 print_usage_and_exit(argv[0]);
                 break;
             default:
+                // Bug in netgear. c === 0xFF
                 printf("got c=%x", c);
                 break;
         }
