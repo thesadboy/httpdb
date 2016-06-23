@@ -1107,6 +1107,7 @@ int main(int argc, char *argv[]) {
     https_port[0] = '\0';
     www[0] = '\0';
     reverse[0] = '\0';
+    fprintf(stderr, "%d\n", __LINE__);
 
     while (c >= 0) {
         c = getopt_long(argc, argv, "p:s:c:r:w:l:h", long_options, NULL);
