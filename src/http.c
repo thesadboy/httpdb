@@ -1114,6 +1114,7 @@ int main(int argc, char *argv[]) {
         if (c < 0) {
             break;
         }
+        printf("%c", c);
         switch(c) {
             case 'p':
                 strncpy(http_port, optarg, 63);
