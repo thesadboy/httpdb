@@ -1199,7 +1199,7 @@ int main(int argc, char *argv[]) {
         mg_set_protocol_http_websocket(nc_http);
     }
 
-    if(nu_https != NULL) {
+    if(nc_https != NULL) {
         mg_set_protocol_http_websocket(nc_https);
     }
 
