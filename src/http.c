@@ -1110,7 +1110,9 @@ int main(int argc, char *argv[]) {
     fprintf(stderr, "%d\n", __LINE__);
 
     while (c >= 0) {
-        c = getopt_long(argc, argv, "p:s:c:r:w:l:h", long_options, NULL);
+        // Bug in netgear.
+        //c = getopt_long(argc, argv, "p:s:c:r:w:l:h", long_options, NULL);
+        c = getopt(argc, argv, "p:s:c:r:w:l:h");
         if (c < 0) {
             break;
         }
