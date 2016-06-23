@@ -1092,7 +1092,7 @@ int main(int argc, char *argv[]) {
     struct http_backend *be;
     char http_port[64], https_port[64], www[128], reverse[128];
     char *vhost = NULL, *cert = NULL, *log = NULL;
-    int c = 0;
+    int c = 0;//IMPORTANT use int
 
     mg_mgr_init(&mgr, NULL);
 
@@ -1108,7 +1108,6 @@ int main(int argc, char *argv[]) {
     https_port[0] = '\0';
     www[0] = '\0';
     reverse[0] = '\0';
-    fprintf(stderr, "%d\n", __LINE__);
 
     while (c >= 0) {
         c = getopt_long(argc, argv, "p:s:c:r:w:l:h", long_options, NULL);
@@ -1166,7 +1165,6 @@ int main(int argc, char *argv[]) {
             be->redirect, be->uri_prefix_replacement);
 
     init_req_mgr(&sreq_mgr);
-    fprintf(stderr, "%d\n", __LINE__);
 
     if (strlen(http_port) > 0) {
         if ((nc_http = mg_bind(&mgr, http_port, ev_handler_http)) == NULL) {
@@ -1174,7 +1172,6 @@ int main(int argc, char *argv[]) {
             exit(EXIT_FAILURE);
         }
     }
-    fprintf(stderr, "%d\n", __LINE__);
 
     if (strlen(https_port) > 0) {
         if ((nc_https = mg_bind(&mgr, https_port, ev_handler_https)) == NULL) {
@@ -1182,7 +1179,6 @@ int main(int argc, char *argv[]) {
             exit(EXIT_FAILURE);
         }
     }
-    fprintf(stderr, "%d\n", __LINE__);
 
 #if MG_ENABLE_SSL
     if (cert != NULL && nc_https != NULL) {
