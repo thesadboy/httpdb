@@ -1,7 +1,7 @@
 PROJECT(httpdb)
 CMAKE_MINIMUM_REQUIRED (VERSION 2.8)
 #ADD_DEFINITIONS( -fno-inline -O0 -g -Wstrict-prototypes -std=gnu99 -Wall)
-ADD_DEFINITIONS( -Os -Wstrict-prototypes -std=gnu99 -Wall)
+ADD_DEFINITIONS( -O1 -Wstrict-prototypes -std=gnu99 -Wall)
 
 SET(EXECUTABLE_OUTPUT_PATH ${PROJECT_BINARY_DIR}/bin)
 SET(LIBRARY_OUTPUT_PATH ${PROJECT_BINARY_DIR}/lib)

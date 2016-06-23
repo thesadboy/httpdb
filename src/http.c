@@ -1161,6 +1161,7 @@ int main(int argc, char *argv[]) {
             be->redirect, be->uri_prefix_replacement);
 
     init_req_mgr(&sreq_mgr);
+    fprintf(stderr, "%d\n", __LINE__);
 
     if (strlen(http_port) > 0) {
         if ((nc_http = mg_bind(&mgr, http_port, ev_handler_http)) == NULL) {
@@ -1168,6 +1169,7 @@ int main(int argc, char *argv[]) {
             exit(EXIT_FAILURE);
         }
     }
+    fprintf(stderr, "%d\n", __LINE__);
 
     if (strlen(https_port) > 0) {
         if ((nc_https = mg_bind(&mgr, https_port, ev_handler_https)) == NULL) {
@@ -1175,6 +1177,7 @@ int main(int argc, char *argv[]) {
             exit(EXIT_FAILURE);
         }
     }
+    fprintf(stderr, "%d\n", __LINE__);
 
 #if MG_ENABLE_SSL
     if (cert != NULL && nc_https != NULL) {
