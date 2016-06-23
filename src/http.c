@@ -1088,7 +1088,7 @@ const struct option long_options[] = {
 
 int main(int argc, char *argv[]) {
     struct mg_mgr mgr;
-    struct mg_connection *nc_http, *nc_https;
+    struct mg_connection *nc_http = NULL, *nc_https = NULL;
     struct http_backend *be;
     char http_port[64], https_port[64], www[128], reverse[128];
     char c = 0, *vhost = NULL, *cert = NULL, *log = NULL;
@@ -1162,19 +1162,22 @@ int main(int argc, char *argv[]) {
 
     init_req_mgr(&sreq_mgr);
 
-    /* Open listening socket */
-    if ((nc_http = mg_bind(&mgr, http_port, ev_handler_http)) == NULL) {
-        fprintf(stderr, "mg_bind(%s) failed\n", http_port);
-        exit(EXIT_FAILURE);
+    if (strlen(http_port) > 0) {
+        if ((nc_http = mg_bind(&mgr, http_port, ev_handler_http)) == NULL) {
+            fprintf(stderr, "mg_bind(%s) failed\n", http_port);
+            exit(EXIT_FAILURE);
+        }
     }
 
-    if ((nc_https = mg_bind(&mgr, https_port, ev_handler_https)) == NULL) {
-        fprintf(stderr, "mg_bind(%s) failed\n", https_port);
-        exit(EXIT_FAILURE);
+    if (strlen(https_port) > 0) {
+        if ((nc_https = mg_bind(&mgr, https_port, ev_handler_https)) == NULL) {
+            fprintf(stderr, "mg_bind(%s) failed\n", https_port);
+            exit(EXIT_FAILURE);
+        }
     }
 
 #if MG_ENABLE_SSL
-    if (cert != NULL) {
+    if (cert != NULL && nc_https != NULL) {
         const char *err_str = mg_set_ssl(nc_https, cert, NULL);
         if (err_str != NULL) {
             fprintf(stderr, "Error loading SSL cert: %s\n", err_str);
@@ -1183,12 +1186,21 @@ int main(int argc, char *argv[]) {
     }
 #endif
 
-    mg_set_protocol_http_websocket(nc_http);
-
-    mg_set_protocol_http_websocket(nc_https);
-
     if (s_num_vhost_backends + s_num_default_backends == 0) {
         print_usage_and_exit(argv[0]);
+    }
+
+    if(NULL == nc_http && NULL == nc_https) {
+        fprintf(stderr,  "not http or https found\n");
+        exit(1);
+    }
+
+    if(nc_http != NULL) {
+        mg_set_protocol_http_websocket(nc_http);
+    }
+
+    if(nu_https != NULL) {
+        mg_set_protocol_http_websocket(nc_https);
     }
 
     signal(SIGINT, signal_handler);
