@@ -1112,7 +1112,7 @@ int main(int argc, char *argv[]) {
     while (c >= 0) {
         c = getopt_long(argc, argv, "p:s:c:r:w:l:h", long_options, NULL);
         if (c < 0) {
-            continue;
+            break;
         }
         switch(c) {
             case 'p':
@@ -1134,6 +1134,7 @@ int main(int argc, char *argv[]) {
                 break;
             case 'h':
                 print_usage_and_exit(argv[0]);
+                break;
         }
     }
 
