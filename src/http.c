@@ -489,8 +489,8 @@ static int connect_backend(struct conn_data *conn, struct http_message *hm) {
     struct http_backend *be = choose_backend(hm);
     mg_event_handler_t http_handler = NULL;
 
-    write_log("%.*s %.*s backend=%s\n", (int) hm->method.len, hm->method.p,
-            (int) hm->uri.len, hm->uri.p, be ? be->host_port : "not defined");
+    //write_log("%.*s %.*s backend=%s\n", (int) hm->method.len, hm->method.p,
+    //        (int) hm->uri.len, hm->uri.p, be ? be->host_port : "not defined");
 
     if (be == NULL) return 0;
     if (be->redirect != 0) {
@@ -739,11 +739,12 @@ static int process_json(struct conn_data* conn, struct http_message *hm) {
                 }
             }
 
+            //TODO assess for check if xxx.sh is exists
             n = sprintf(buf, "%s", " > /dev/null 2>&1 &");
             buf[n] = '\0';
 
             n = strtol(fields[0].ptr, NULL, 10);
-            printf("set id=%d flen=%d dst=%s\n", n, fields[0].len, dst);
+            //printf("set id=%d flen=%d dst=%s\n", n, fields[0].len, dst);
             system(dst);
 
             new_json_request(&sreq_mgr, nc, n, time(NULL));
@@ -913,7 +914,7 @@ static void ev_handler(struct mg_connection *nc, int ev, void *ev_data, int http
                     //          "Content-Type: application/json\r\n\r\n{}");
 
                     result = process_json(conn, hm);
-                    printf("result=%d\n", result);
+                    //printf("result=%d\n", result);
                     if(result != 0) {
                         nc->flags |= MG_F_SEND_AND_CLOSE;
                         conn->client.nc = NULL;
@@ -1028,7 +1029,7 @@ static void ev_handler(struct mg_connection *nc, int ev, void *ev_data, int http
                 assert(conn != NULL);
                 if(conn->client.nc == NULL) {
                     //json closed
-                    printf("json closed\n");
+                    //printf("json closed\n");
                 } else if (nc == conn->client.nc) {
 #ifdef DEBUG
                     write_log("conn=%p nc=%p client closed, body_sent=%d\n", conn, nc,
