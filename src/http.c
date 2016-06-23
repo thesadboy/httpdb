@@ -1131,8 +1131,10 @@ int main(int argc, char *argv[]) {
                 log = optarg;
                 break;
             case 'h':
-            default:
                 print_usage_and_exit(argv[0]);
+                break;
+            default:
+                printf("got c=%x", c);
                 break;
         }
     }
