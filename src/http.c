@@ -16,6 +16,8 @@
 #define PREFIX_API_LEN (6)
 #define PREFIX_ROOT "/_root/"
 #define PREFIX_ROOT_LEN (7)
+#define PREFIX_TEMP "/_temp/"
+#define PREFIX_TEMP_LEN (7)
 #define PREFIX_RESP "/_resp/"
 #define PREFIX_RESP_LEN (7)
 #define PREFIX_RESULT "/_result/"
@@ -116,6 +118,7 @@ static int s_sig_num = 0;
 static int s_backend_keepalive = 0;
 static FILE *s_log_file = NULL;
 static struct mg_serve_http_opts s_http_server_opts = {0};
+static struct mg_serve_http_opts s_http_tmp_opts = {0};
 
 static void init_req_mgr(struct json_req_mgr* mgr) {
     mgr->req_map = kh_init(32);
@@ -666,7 +669,7 @@ static int dblist_prefix(struct mg_connection *nc, dbclient* client, char* prefi
 
 static int process_json(struct conn_data* conn, struct http_message *hm) {
 #define DST_LEN (510)
-    int i, n, dst_len = DST_LEN-9;
+    int i, n, ok, dst_len = DST_LEN-9;
     struct json_token tokens[200] = {{0}};
     char *buf, dst[DST_LEN+50];
     struct json_token *method, *params, *fields;
@@ -678,9 +681,6 @@ static int process_json(struct conn_data* conn, struct http_message *hm) {
             "Content-Type: application/json\r\n\r\n");
 
     if(0 == mg_vcasecmp(&hm->method, "POST")) {
-        dst[0] = '\0';
-        buf = dst;
-
         n = parse_json(hm->body.p, hm->body.len, tokens, sizeof(tokens) / sizeof(tokens[0]));
         if (n <= 0) {
             return -1;
@@ -702,10 +702,24 @@ static int process_json(struct conn_data* conn, struct http_message *hm) {
             dbclient_end(&client);
         }
 
+        dst[0] = '\0';
+        buf = dst;
+        ok = 1;
+        if(method != NULL && JSON_TYPE_STRING == method[0].type && dst_len > method[0].len) {
+            n = sprintf(buf, "%s/%s", "/koolshare/scripts", method[0].ptr);
+            buf[n] = '\0';
+            if(-1 == access(buf, X_OK)) {
+                ok = 0;
+            }
+
+            buf[0] = '\0';
+        } else {
+            ok = 0;
+        }
+
         fields = find_json_token(tokens, "id");
         method = find_json_token(tokens, "method");
-        if(method != NULL && JSON_TYPE_STRING == method[0].type && dst_len > method[0].len
-                && fields != NULL && JSON_TYPE_NUMBER == fields[0].type && fields[0].len < 9) {
+        if(ok && fields != NULL && JSON_TYPE_NUMBER == fields[0].type && fields[0].len < 9) {
             n = method[0].len;
             memcpy(buf, method[0].ptr, n);
             buf[n] = ' ';
@@ -930,6 +944,15 @@ static void ev_handler(struct mg_connection *nc, int ev, void *ev_data, int http
                     nc->flags |= MG_F_SEND_AND_CLOSE;
                     conn->client.nc = NULL;
                     break;
+                } else if(hm != NULL && has_prefix(&hm->uri, PREFIX_TEMP)) {
+                    //rewrite uri
+                    hm->uri.p += PREFIX_TEMP_LEN-1;
+                    hm->uri.len -= PREFIX_TEMP_LEN-1;
+                    mg_serve_http(nc, hm, s_http_tmp_opts); /* Serve static content */
+
+                    nc->flags |= MG_F_SEND_AND_CLOSE;
+                    conn->client.nc = NULL;
+                    break;
                 } else if(hm != NULL && has_prefix(&hm->uri, PREFIX_RESP)) {
 
                     id = 0;
@@ -1100,10 +1123,14 @@ int main(int argc, char *argv[]) {
     s_backend_keepalive = 1;
     s_log_file = stdout;
     vhost = NULL;
+
     //cert = "../tests/ssl.pem";
     //s_http_server_opts.document_root = "../tests/web_root";
     //s_http_server_opts.enable_directory_listing = "no";
     //s_http_server_opts.url_rewrites = "/_root=/web_root";
+
+    s_http_tmp_opts.document_root = "/tmp/info";
+    s_http_tmp_opts.enable_directory_listing = "no";
 
     http_port[0] = '\0';
     https_port[0] = '\0';
