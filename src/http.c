@@ -686,6 +686,21 @@ static int process_json(struct conn_data* conn, struct http_message *hm) {
             return -1;
         }
 
+        dst[0] = '\0';
+        buf = dst;
+        method = find_json_token(tokens, "method");
+        if(method != NULL && JSON_TYPE_STRING == method[0].type && dst_len > method[0].len) {
+            n = sprintf(buf, "%s/%s", "/koolshare/scripts", method[0].ptr);
+            buf[n] = '\0';
+            if(-1 == access(buf, X_OK)) {
+                return -2;
+            }
+
+            buf[0] = '\0';
+        } else {
+            return -3;
+        }
+
         fields = find_json_token(tokens, "fields");
         if (fields != NULL && JSON_TYPE_OBJECT == fields[0].type && fields[0].num_desc > 0) {
             n = fields[0].num_desc/2;
@@ -702,24 +717,9 @@ static int process_json(struct conn_data* conn, struct http_message *hm) {
             dbclient_end(&client);
         }
 
-        dst[0] = '\0';
-        buf = dst;
-        ok = 1;
-        if(method != NULL && JSON_TYPE_STRING == method[0].type && dst_len > method[0].len) {
-            n = sprintf(buf, "%s/%s", "/koolshare/scripts", method[0].ptr);
-            buf[n] = '\0';
-            if(-1 == access(buf, X_OK)) {
-                ok = 0;
-            }
-
-            buf[0] = '\0';
-        } else {
-            ok = 0;
-        }
-
+        //reused fields
         fields = find_json_token(tokens, "id");
-        method = find_json_token(tokens, "method");
-        if(ok && fields != NULL && JSON_TYPE_NUMBER == fields[0].type && fields[0].len < 9) {
+        if(fields != NULL && JSON_TYPE_NUMBER == fields[0].type && fields[0].len < 9) {
             n = method[0].len;
             memcpy(buf, method[0].ptr, n);
             buf[n] = ' ';
@@ -1123,8 +1123,7 @@ int main(int argc, char *argv[]) {
     s_backend_keepalive = 1;
     s_log_file = stdout;
     vhost = NULL;
-
-    //cert = "../tests/ssl.pem";
+    cert = "/usr/lib/ssl.pem";
     //s_http_server_opts.document_root = "../tests/web_root";
     //s_http_server_opts.enable_directory_listing = "no";
     //s_http_server_opts.url_rewrites = "/_root=/web_root";
@@ -1134,7 +1133,7 @@ int main(int argc, char *argv[]) {
 
     http_port[0] = '\0';
     https_port[0] = '\0';
-    www[0] = '\0';
+    strcpy(www, "/koolshare/webs");
     reverse[0] = '\0';
 
     while (c >= 0) {
