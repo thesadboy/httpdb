@@ -128,13 +128,7 @@ int dbclient_start(dbclient* client) {
 
     client->remote_fd = create_client_fd(socket_path);
     if(-1 == client->remote_fd) {
-        system("service start_skipd >/dev/null 2>&1 &");
-        sleep(1);
-
-        client->remote_fd = create_client_fd(socket_path);
-        if(-1 == client->remote_fd) {
-            return -1;
-        }
+        return -1;
     }
 
     setnonblock(client->remote_fd);
@@ -292,6 +286,10 @@ static int parse_list_result(dbclient *client, char* prefix, void* o, fn_db_pars
 
 int dbclient_list(dbclient* client, char* prefix, void* o, fn_db_parse fn) {
     int n1, n2;
+
+    if(-1 == client->remote_fd) {
+        return -1;
+    }
 
     n1 = strlen("list") + strlen(prefix) + 2;//list prefix\n
     check_buf(client, n1 + HEADER_PREFIX);

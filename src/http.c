@@ -669,7 +669,7 @@ static int dblist_prefix(struct mg_connection *nc, dbclient* client, char* prefi
 
 static int process_json(struct conn_data* conn, struct http_message *hm) {
 #define DST_LEN (510)
-    int i, n, ok, dst_len = DST_LEN-9;
+    int i, n, dst_len = DST_LEN-9;
     struct json_token tokens[200] = {{0}};
     char *buf, dst[DST_LEN+50];
     struct json_token *method, *params, *fields;
@@ -690,7 +690,9 @@ static int process_json(struct conn_data* conn, struct http_message *hm) {
         buf = dst;
         method = find_json_token(tokens, "method");
         if(method != NULL && JSON_TYPE_STRING == method[0].type && dst_len > method[0].len) {
-            n = sprintf(buf, "%s/%s", "/koolshare/scripts", method[0].ptr);
+            n = sprintf(buf, "%s/", "/koolshare/scripts");
+            memcpy(buf+n, method[0].ptr, method[0].len);
+            n += method[0].len;
             buf[n] = '\0';
             if(-1 == access(buf, X_OK)) {
                 return -2;
@@ -704,7 +706,9 @@ static int process_json(struct conn_data* conn, struct http_message *hm) {
         fields = find_json_token(tokens, "fields");
         if (fields != NULL && JSON_TYPE_OBJECT == fields[0].type && fields[0].num_desc > 0) {
             n = fields[0].num_desc/2;
-            dbclient_start(&client);
+            if( 0 != dbclient_start(&client)) {
+                return -5;
+            }
             //printf("n=%d origin=%d\n", n, fields[0].num_desc);
 
             for(i = 0; i <= n; i++) {
@@ -772,16 +776,17 @@ static int process_json(struct conn_data* conn, struct http_message *hm) {
     } else if(0 == mg_vcasecmp(&hm->method, "GET")) {
         dst[0] = '\0';
         if(dst_len < hm->uri.len || hm->uri.len <= PREFIX_API_LEN) {
-            mg_printf_http_chunk(nc, "{ \"result\": %d }", -3);
-            mg_send_http_chunk(nc, "", 0);
-            return -3;
+            return -4;
         }
         n = hm->uri.len - PREFIX_API_LEN;
         memcpy(dst, hm->uri.p + PREFIX_API_LEN, n);
         dst[n] = '\0';
         //printf("get dst=%s\n", dst);
 
-        dbclient_start(&client);
+        if(0 != dbclient_start(&client)) {
+            return -6;
+        }
+
         dblist_prefix(nc, &client, dst);
         dbclient_end(&client);
 
@@ -923,13 +928,11 @@ static void ev_handler(struct mg_connection *nc, int ev, void *ev_data, int http
                 check_timeout(&sreq_mgr, time(NULL));
 
                 if(hm != NULL && has_prefix(&hm->uri, PREFIX_API)) {
-                    //printf("json connected\n");
-                    //mg_printf(nc, "HTTP/1.0 200 OK\r\nContent-Length: 2\r\n"
-                    //          "Content-Type: application/json\r\n\r\n{}");
-
                     result = process_json(conn, hm);
-                    //printf("result=%d\n", result);
                     if(result != 0) {
+                        mg_printf_http_chunk(nc, "{ \"result\": %d }", result);
+                        mg_send_http_chunk(nc, "", 0);
+
                         nc->flags |= MG_F_SEND_AND_CLOSE;
                         conn->client.nc = NULL;
                     }
@@ -1133,7 +1136,7 @@ int main(int argc, char *argv[]) {
 
     http_port[0] = '\0';
     https_port[0] = '\0';
-    strcpy(www, "/koolshare/webs");
+    strcpy(www, "/koolshare/webs/");
     reverse[0] = '\0';
 
     while (c >= 0) {
@@ -1150,6 +1153,7 @@ int main(int argc, char *argv[]) {
                 break;
             case 'r':
                 strncpy(reverse, optarg, 127);
+                break;
             case 'w':
                 strncpy(www, optarg, 127);
                 break;
@@ -1161,7 +1165,7 @@ int main(int argc, char *argv[]) {
                 break;
             default:
                 // Bug in netgear. c === 0xFF
-                printf("got c=%x\n", c);
+                //printf("got c=%x\n", c);
                 c = -1;
                 break;
         }
@@ -1238,7 +1242,7 @@ int main(int argc, char *argv[]) {
     signal(SIGTERM, signal_handler);
 
     /* Run event loop until signal is received */
-    printf("Starting http on port %s\nhttps on port %s\n", http_port, https_port);
+    printf("Starting http on port %s\nhttps on port %s www=%s\n", http_port, https_port, www);
     while (s_sig_num == 0) {
         mg_mgr_poll(&mgr, 1000);
     }
